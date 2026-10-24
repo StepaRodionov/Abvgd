@@ -1055,17 +1055,28 @@ class MainActivity : AppCompatActivity() {
      * настройках и используется кнопкой "Начать подбор".
      */
     private fun showCodeListDialog() {
+        val density = resources.displayMetrics.density
         val input = EditText(this).apply {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
             minLines = 6
+            gravity = android.view.Gravity.TOP or android.view.Gravity.START
             hint = "например: 000000, 123456, 1234, 112233, 888888"
             setText(codeProbeList.joinToString(", "))
             setSelection(text.length)
         }
-        val padding = (16 * resources.displayMetrics.density).toInt()
+        val padding = (16 * density).toInt()
+        // Поле кладём в ScrollView с ЖЁСТКО заданной высотой (а не wrap_content) —
+        // иначе при большом списке паролей EditText растягивается на весь текст и
+        // выталкивает кнопки "Сохранить"/"Отмена" диалога за пределы экрана.
+        // Внутри этой высоты текст сам прокручивается, сам диалог больше не растёт.
+        val maxHeightPx = (320 * density).toInt()
+        val scroll = ScrollView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, maxHeightPx)
+            addView(input, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT))
+        }
         val container = FrameLayout(this).apply {
             setPadding(padding, padding, padding, padding)
-            addView(input)
+            addView(scroll)
         }
         AlertDialog.Builder(this)
             .setTitle("Список паролей через запятую")
