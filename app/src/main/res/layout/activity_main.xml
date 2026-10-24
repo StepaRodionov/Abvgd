@@ -293,6 +293,42 @@
                     android:layout_height="wrap_content"
                     android:text="Пароль: не отправлялся" />
 
+                <!-- Блок подбора пароля (Брутфорс) -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="Подбор пароля (Брутфорс)"
+                    android:textStyle="bold" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <Button
+                        android:id="@+id/btnSetBruteList"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Вписать пароли" />
+
+                    <Button
+                        android:id="@+id/btnStartBrute"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Начать подбор" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/tvBruteState"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Список пуст"
+                    android:textStyle="bold" />
+                <!-- КОНЕЦ Блока подбора пароля -->
+
                 <Button
                     android:id="@+id/btnLockDiag"
                     android:layout_width="match_parent"
