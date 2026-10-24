@@ -68,6 +68,27 @@ class MainActivity : AppCompatActivity() {
             "+FIND=1" to "+FIND=0",
         )
 
+        // Паттерны стробоскопа: список шагов (свет включён?, длительность в "тиках").
+        // Длительность тика задаёт ползунок. null вместо шагов = генерируется случайно.
+        class StrobePattern(val name: String, val steps: List<Pair<Boolean, Int>>?, val ultra: Boolean = false)
+
+        private fun blink(n: Int, on: Int, off: Int): List<Pair<Boolean, Int>> =
+            (1..n).flatMap { listOf(true to on, false to off) }
+
+        val STROBE_PATTERNS = listOf(
+            StrobePattern("1. Ровное мигание", listOf(true to 1, false to 1)),
+            StrobePattern("2. Короткая вспышка", listOf(true to 1, false to 4)),
+            StrobePattern("3. Двойная вспышка", blink(1, 1, 1) + listOf(true to 1, false to 5)),
+            StrobePattern("4. Тройная вспышка", blink(2, 1, 1) + listOf(true to 1, false to 6)),
+            StrobePattern("5. Полиция (серия + длинные)", blink(3, 1, 1) + listOf(true to 4, false to 4)),
+            StrobePattern("6. SOS", blink(3, 1, 1) + blink(3, 3, 1) + blink(2, 1, 1) + listOf(true to 1, false to 6)),
+            StrobePattern("7. Пульс (нарастание)", listOf(true to 1, false to 5, true to 2, false to 4,
+                true to 3, false to 3, true to 4, false to 2, true to 5, false to 1)),
+            StrobePattern("8. Маяк (редкая вспышка)", listOf(true to 1, false to 9)),
+            StrobePattern("9. Случайный", null),
+            StrobePattern("10. УЛЬТРА-быстро (макс. скорость)", listOf(true to 1, false to 1), ultra = true),
+        )
+
         // Запросы для проверки поддержки: ключ ответа -> команда-запрос.
         val SUPPORT_QUERIES = listOf(
             "MODE" to "+MODE=?",
@@ -104,6 +125,15 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnLightOn: Button
     private lateinit var btnLightOff: Button
     private lateinit var btnStrobe: Button
+    private lateinit var spinnerStrobe: Spinner
+    private lateinit var tvLockState: TextView
+    private lateinit var tvCruiseState: TextView
+    private lateinit var editCode: EditText
+    private lateinit var btnCodeSend: Button
+    private lateinit var checkAutoCode: CheckBox
+    private lateinit var tvCodeState: TextView
+    private lateinit var btnLockDiag: Button
+    private lateinit var tvLockDiag: TextView
     private lateinit var tvStrobeSpeed: TextView
     private lateinit var seekStrobe: SeekBar
     private lateinit var spinnerHorn: Spinner
@@ -153,7 +183,8 @@ class MainActivity : AppCompatActivity() {
             val ch: BluetoothGattCharacteristic,
             val bytes: ByteArray,
             val text: String,
-            val quiet: Boolean = false
+            val quiet: Boolean = false,
+            val noResp: Boolean = false
         ) : GattOp()
         data class DescWrite(val desc: BluetoothGattDescriptor, val value: ByteArray, val label: String) : GattOp()
     }
@@ -189,12 +220,21 @@ class MainActivity : AppCompatActivity() {
     private var strobePhase = false
     private var strobeIntervalMs = 200L
     private var lightBeforeStrobe: Boolean? = null
+    private var strobeSteps: List<Pair<Boolean, Int>> = listOf(true to 1, false to 1)
+    private var strobeStep = 0
+    private var strobeUltra = false
+    private var strobePatternIdx = 0
 
     // ---- Гудок ----
     private var hornIdx = 0
     private var hornProbeRunning = false
     private var hornProbeIdx = -1
     private val hornProbeReplies = StringBuffer()
+
+    // ---- Скрипт команд (тест блокировки/круиза) ----
+    private var scriptRunning = false
+    private val scriptReplies = StringBuffer()
+    private var codeSentCount = 0
 
     // ---- Проверка поддержки команд ----
     private var supportChecking = false
@@ -240,6 +280,15 @@ class MainActivity : AppCompatActivity() {
         btnLightOn = findViewById(R.id.btnLightOn)
         btnLightOff = findViewById(R.id.btnLightOff)
         btnStrobe = findViewById(R.id.btnStrobe)
+        spinnerStrobe = findViewById(R.id.spinnerStrobe)
+        tvLockState = findViewById(R.id.tvLockState)
+        tvCruiseState = findViewById(R.id.tvCruiseState)
+        editCode = findViewById(R.id.editCode)
+        btnCodeSend = findViewById(R.id.btnCodeSend)
+        checkAutoCode = findViewById(R.id.checkAutoCode)
+        tvCodeState = findViewById(R.id.tvCodeState)
+        btnLockDiag = findViewById(R.id.btnLockDiag)
+        tvLockDiag = findViewById(R.id.tvLockDiag)
         tvStrobeSpeed = findViewById(R.id.tvStrobeSpeed)
         seekStrobe = findViewById(R.id.seekStrobe)
         spinnerHorn = findViewById(R.id.spinnerHorn)
@@ -274,14 +323,27 @@ class MainActivity : AppCompatActivity() {
         // ---- Стробоскоп ----
         seekStrobe.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
-                strobeIntervalMs = 80L + progress * 10L
+                strobeIntervalMs = 20L + progress * 10L
                 tvStrobeSpeed.text = "Интервал: $strobeIntervalMs мс"
             }
             override fun onStartTrackingTouch(sb: SeekBar?) {}
             override fun onStopTrackingTouch(sb: SeekBar?) {}
         })
-        strobeIntervalMs = 80L + seekStrobe.progress * 10L
+        strobeIntervalMs = 20L + seekStrobe.progress * 10L
         tvStrobeSpeed.text = "Интервал: $strobeIntervalMs мс"
+        val strobeAdapter = ArrayAdapter(
+            this, android.R.layout.simple_spinner_item, STROBE_PATTERNS.map { it.name }
+        )
+        strobeAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        spinnerStrobe.adapter = strobeAdapter
+        spinnerStrobe.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                strobePatternIdx = position
+                // Если стробоскоп уже идёт — переключаем паттерн на лету.
+                if (strobeOn) applyStrobePattern()
+            }
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
         btnStrobe.setOnClickListener { if (strobeOn) stopStrobe(restore = true) else startStrobe() }
 
         // ---- Гудок ----
@@ -319,10 +381,23 @@ class MainActivity : AppCompatActivity() {
         btnHornFound.setOnClickListener { hornFound() }
 
         // ---- Блокировка, круиз, передачи (строки из VehicleFragment.java оригинала) ----
-        btnLock.setOnClickListener { sendCommand("+LOCK=1") }
-        btnUnlock.setOnClickListener { sendCommand("+LOCK=0") }
-        btnCruiseOn.setOnClickListener { sendCommand("+CRZE=1") }
-        btnCruiseOff.setOnClickListener { sendCommand("+CRZE=0") }
+        // После каждой команды сразу спрашиваем состояние ("=?"), как это делает оригинал,
+        // чтобы по строке состояния было видно, принял ли самокат команду.
+        btnLock.setOnClickListener { sendCommand("+LOCK=1"); sendCommand("+LOCK=?") }
+        btnUnlock.setOnClickListener { sendCommand("+LOCK=0"); sendCommand("+LOCK=?") }
+        btnCruiseOn.setOnClickListener { sendCommand("+CRZE=1"); sendCommand("+CRZE=?") }
+        btnCruiseOff.setOnClickListener { sendCommand("+CRZE=0"); sendCommand("+CRZE=?") }
+        editCode.setText(prefs.getString("code", "") ?: "")
+        checkAutoCode.isChecked = prefs.getBoolean("auto_code", false)
+        checkAutoCode.setOnCheckedChangeListener { _, checked -> prefs.edit().putBoolean("auto_code", checked).apply() }
+        btnCodeSend.setOnClickListener { sendPasswordCode() }
+        btnLockDiag.setOnClickListener {
+            runCommandScript(
+                "Тест блокировки и круиза (каждая команда — пауза 1.5 с, смотри ответ):",
+                listOf("+LOCK=?", "+CRZE=?", "+LOCK=0", "+LOCK=?", "+CRZE=1", "+CRZE=?", "+CRZE=0", "+CRZE=?"),
+                1500L, tvLockDiag
+            )
+        }
         btnGearUp.setOnClickListener {
             gearNum++
             sendCommand("+MODE=$gearNum")
@@ -458,6 +533,11 @@ class MainActivity : AppCompatActivity() {
         servicesRequested = false
         supportChecking = false
         supportSeen.clear()
+        scriptRunning = false
+        codeSentCount = 0
+        tvLockState.text = "Блокировка: неизвестно"
+        tvCruiseState.text = "Круиз: неизвестно"
+        tvCodeState.text = "Пароль: не отправлялся"
         tvTelemetry.text = "(пока нет данных — подключись и дождись рукопожатия)"
         tvSupport.text = ""
         for (b in listOf(btnLock, btnUnlock, btnCruiseOn, btnCruiseOff, btnGearUp, btnGearDown)) b.alpha = 1f
@@ -533,6 +613,10 @@ class MainActivity : AppCompatActivity() {
                 log("discoverServices failed: $status")
                 return
             }
+            // Высокий приоритет соединения = короткий интервал связи (~11-15 мс вместо 30-50):
+            // нужен, чтобы стробоскоп мог мигать быстро.
+            val prio = g.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH)
+            log("requestConnectionPriority(HIGH) -> $prio")
             writableChars.clear()
             detectedMode = null
             detectedLabel = null
@@ -651,10 +735,17 @@ class MainActivity : AppCompatActivity() {
         if (!noisy) log("<< ${characteristic.uuid}  hex=[$hex]  text=\"$rawText\"")
 
         if (hornProbeRunning) hornProbeReplies.append(rawText.trim()).append(' ')
+        if (scriptRunning && !noisy) scriptReplies.append(rawText.trim()).append(' ')
 
         when (upper) {
-            "CODE_OK" -> log("Самокат принял пароль (CODE_OK).")
-            "CODE_NG" -> log("Самокат отклонил пароль (CODE_NG). Попробуй другой код в поле ниже.")
+            "CODE_OK" -> {
+                log("Самокат принял пароль (CODE_OK).")
+                runOnUiThread { tvCodeState.text = "Пароль: ПРИНЯТ (CODE_OK)" }
+            }
+            "CODE_NG" -> {
+                log("Самокат отклонил пароль (CODE_NG). Попробуй другой код.")
+                runOnUiThread { tvCodeState.text = "Пароль: ОТКЛОНЁН (CODE_NG) — неверный" }
+            }
         }
 
         if (checkAutoReply.isChecked) {
@@ -664,6 +755,10 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
                     updateAuthState()
                     showTab(control = true) // авторизация пройдена — переходим к управлению
+                    // Один раз, без повторов: неверный пароль 3 раза подряд оригинал считает ошибкой.
+                    if (checkAutoCode.isChecked && editCode.text.isNotBlank()) {
+                        handler.postDelayed({ sendPasswordCode() }, 700)
+                    }
                 }
             }
         }
@@ -715,6 +810,21 @@ class MainActivity : AppCompatActivity() {
                 "0" -> lightOn = false
             }
         }
+        if (key == "LOCK" || key == "CRZE") {
+            val v = value.trim()
+            val state = when (v) {
+                "1" -> if (key == "LOCK") "ЗАБЛОКИРОВАН" else "ВКЛЮЧЁН"
+                "0" -> if (key == "LOCK") "разблокирован" else "выключен"
+                else -> "ответ \"$v\""
+            }
+            runOnUiThread {
+                if (key == "LOCK") {
+                    tvLockState.text = "Блокировка: $state"
+                } else {
+                    tvCruiseState.text = "Круиз: $state"
+                }
+            }
+        }
         if (key == "MODE") value.trim().toIntOrNull()?.let { if (it in 1..9) gearNum = it }
 
         if (strobeOn && key == "HLGT") return // не перерисовываем UI на каждое мигание
@@ -739,30 +849,54 @@ class MainActivity : AppCompatActivity() {
     // ---------- Свет ----------
 
     /** Включает/выключает фару (текстом HLGT=1/0 либо бинарным кадром, если стоит галка). */
-    private fun setLight(on: Boolean, quiet: Boolean = false) {
+    private fun setLight(on: Boolean, quiet: Boolean = false, fast: Boolean = false) {
         lightOn = on
         if (checkBinaryLight.isChecked) {
-            sendHex(if (on) "AA070601AABB" else "AA070600ABBB", quiet)
+            sendHex(if (on) "AA070601AABB" else "AA070600ABBB", quiet, fast)
         } else {
-            sendCommand(if (on) "HLGT=1" else "HLGT=0", quiet)
+            sendCommand(if (on) "HLGT=1" else "HLGT=0", quiet, fast)
         }
     }
 
     // ---------- Стробоскоп ----------
     // В протоколе самоката отдельной команды "стробоскоп" нет. Единственный реально
-    // доступный способ — быстро включать и выключать фару (HLGT=1/0). Скорость мигания
-    // ограничена скоростью BLE-записи (каждая запись ждёт подтверждения), поэтому
-    // минимальный интервал 80 мс; если очередь не успевает — такт пропускается.
+    // доступный способ — быстро включать и выключать фару (HLGT=1/0) по заданному паттерну.
+    // Для высокого темпа используется запись без подтверждения (WRITE_NO_RESPONSE) и
+    // высокий приоритет соединения; если очередь не успевает, шаг ждёт, а не пропускается.
 
     private val strobeTick = object : Runnable {
         override fun run() {
             if (!strobeOn) return
-            if (gatt != null && !gattBusy && gattQueue.isEmpty()) {
-                strobePhase = !strobePhase
-                setLight(strobePhase, quiet = true)
+            if (gatt == null) {
+                stopStrobe(restore = false)
+                return
             }
-            handler.postDelayed(this, strobeIntervalMs)
+            // Очередь ещё не разгребла прошлые записи — ждём, шаг паттерна НЕ пропускаем,
+            // иначе мигание "съедет" и паттерн исказится.
+            if (gattBusy || gattQueue.size > 1) {
+                handler.postDelayed(this, 4)
+                return
+            }
+            val (on, ticks) = strobeSteps[strobeStep % strobeSteps.size]
+            strobeStep++
+            // "Быстрая" запись (WRITE_NO_RESPONSE, если характеристика её поддерживает) —
+            // не ждёт подтверждения самоката, поэтому темп ограничен только радиоканалом.
+            val fast = strobeUltra || strobeIntervalMs < 100
+            setLight(on, quiet = true, fast = fast)
+            val delay = if (strobeUltra) 8L else ticks * strobeIntervalMs
+            handler.postDelayed(this, delay)
         }
+    }
+
+    /** Выбирает шаги по текущему паттерну (для "Случайного" — генерирует новую последовательность). */
+    private fun applyStrobePattern() {
+        val p = STROBE_PATTERNS[strobePatternIdx]
+        strobeUltra = p.ultra
+        strobeSteps = p.steps ?: run {
+            val rnd = Random()
+            (1..8).flatMap { listOf(true to (1 + rnd.nextInt(3)), false to (1 + rnd.nextInt(5))) }
+        }
+        strobeStep = 0
     }
 
     private fun startStrobe() {
@@ -771,10 +905,11 @@ class MainActivity : AppCompatActivity() {
             return
         }
         lightBeforeStrobe = lightOn
-        strobePhase = lightOn ?: false
+        applyStrobePattern()
         strobeOn = true
         btnStrobe.text = "Стробоскоп: СТОП"
-        log("Стробоскоп включён (интервал $strobeIntervalMs мс)")
+        log("Стробоскоп включён: ${STROBE_PATTERNS[strobePatternIdx].name}, тик $strobeIntervalMs мс")
+        handler.removeCallbacks(strobeTick)
         handler.post(strobeTick)
     }
 
@@ -846,6 +981,57 @@ class MainActivity : AppCompatActivity() {
         getSharedPreferences("scooter", MODE_PRIVATE).edit().putInt("horn_idx", idx).apply()
     }
 
+    // ---------- Пароль подключения и скрипт-диагностика ----------
+
+    private fun sendPasswordCode() {
+        if (gatt == null) {
+            tvCodeState.text = "Пароль: нет подключения"
+            return
+        }
+        val code = editCode.text.toString().trim()
+        if (code.isEmpty()) {
+            tvCodeState.text = "Пароль: введи код"
+            return
+        }
+        getSharedPreferences("scooter", MODE_PRIVATE).edit().putString("code", code).apply()
+        codeSentCount++
+        tvCodeState.text = "Пароль: отправлен ($codeSentCount), жду ответ..."
+        sendCommand("CODE=$code")
+    }
+
+    /**
+     * Шлёт список команд с паузой между ними и для каждой показывает, что самокат
+     * ответил в течение паузы. Нужен, чтобы своими глазами увидеть реакцию самоката.
+     */
+    private fun runCommandScript(title: String, cmds: List<String>, gapMs: Long, out: TextView) {
+        if (gatt == null) {
+            out.text = "Сначала подключись к самокату."
+            return
+        }
+        if (scriptRunning) return
+        scriptRunning = true
+        scriptReplies.setLength(0)
+        val report = StringBuilder(title).append('\n')
+        cmds.forEachIndexed { i, cmd ->
+            handler.postDelayed({
+                if (!scriptRunning) return@postDelayed
+                if (i > 0) report.append("   <- ").append(scriptReplies.toString().trim().ifEmpty { "тишина" }).append('\n')
+                scriptReplies.setLength(0)
+                report.append("-> ").append(cmd).append('\n')
+                out.text = report.toString()
+                sendCommand(cmd)
+            }, i * gapMs)
+        }
+        handler.postDelayed({
+            if (!scriptRunning) return@postDelayed
+            report.append("   <- ").append(scriptReplies.toString().trim().ifEmpty { "тишина" }).append('\n')
+            report.append("Готово. Если везде «ERROR» или «тишина» — самокат не принимает эти команды по Bluetooth.")
+            out.text = report.toString()
+            log(report.toString())
+            scriptRunning = false
+        }, cmds.size * gapMs)
+    }
+
     // ---------- Проверка поддержки команд ----------
 
     private fun checkSupport() {
@@ -883,18 +1069,18 @@ class MainActivity : AppCompatActivity() {
     // ---------- Отправка ----------
 
     @SuppressLint("MissingPermission")
-    private fun sendCommand(text: String, quiet: Boolean = false) {
+    private fun sendCommand(text: String, quiet: Boolean = false, fast: Boolean = false) {
         val g = gatt
         val target = detectedWriteChar ?: selectedWriteChar ?: writableChars.firstOrNull()
         if (g == null || target == null) {
             log("Не могу отправить \"$text\": нет подключения или writable-характеристики.")
             return
         }
-        writeBytes(g, target, text.toByteArray(Charsets.ISO_8859_1), quiet)
+        writeBytes(g, target, text.toByteArray(Charsets.ISO_8859_1), quiet, fast)
     }
 
     @SuppressLint("MissingPermission")
-    private fun sendHex(hex: String, quiet: Boolean = false) {
+    private fun sendHex(hex: String, quiet: Boolean = false, fast: Boolean = false) {
         val g = gatt
         val target = detectedWriteChar ?: selectedWriteChar ?: writableChars.firstOrNull()
         if (g == null || target == null) {
@@ -905,7 +1091,7 @@ class MainActivity : AppCompatActivity() {
         val bytes = ByteArray(clean.length / 2) { i ->
             clean.substring(i * 2, i * 2 + 2).toInt(16).toByte()
         }
-        writeBytes(g, target, bytes, quiet)
+        writeBytes(g, target, bytes, quiet, fast)
     }
 
     private fun sendAuthString(text: String) = sendCommand(text)
@@ -923,8 +1109,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** Кладёт запись в общую GATT-очередь — см. pumpGattQueue(). */
-    private fun writeBytes(g: BluetoothGatt, ch: BluetoothGattCharacteristic, bytes: ByteArray, quiet: Boolean = false) {
-        gattQueue.addLast(GattOp.CharWrite(ch, bytes, bytes.toString(Charsets.ISO_8859_1), quiet))
+    private fun writeBytes(
+        g: BluetoothGatt, ch: BluetoothGattCharacteristic, bytes: ByteArray,
+        quiet: Boolean = false, fast: Boolean = false
+    ) {
+        val noResp = fast && (ch.properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0
+        gattQueue.addLast(GattOp.CharWrite(ch, bytes, bytes.toString(Charsets.ISO_8859_1), quiet, noResp))
         pumpGattQueue()
     }
 
@@ -951,14 +1141,15 @@ class MainActivity : AppCompatActivity() {
                 if (!op.quiet) {
                     log(">> ${op.ch.uuid}  \"${op.text}\"  hex=[${op.bytes.joinToString(" ") { String.format("%02X", it) }}]")
                 }
+                val wt = if (op.noResp) BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                         else BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    g.writeCharacteristic(op.ch, op.bytes, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT) ==
-                        BluetoothStatusCodes.SUCCESS
+                    g.writeCharacteristic(op.ch, op.bytes, wt) == BluetoothStatusCodes.SUCCESS
                 } else {
                     @Suppress("DEPRECATION")
                     op.ch.value = op.bytes
                     @Suppress("DEPRECATION")
-                    op.ch.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                    op.ch.writeType = wt
                     @Suppress("DEPRECATION")
                     g.writeCharacteristic(op.ch)
                 }
