@@ -269,6 +269,10 @@ class MainActivity : AppCompatActivity() {
 
         tvStatus = findViewById(R.id.tvStatus)
         tvLog = findViewById(R.id.tvLog)
+        // Метка сборки — чтобы по логу сразу видеть, актуальный ли APK установлен
+        // (меняй число при следующих правках подбора пароля, если снова будет непонятно,
+        // обновился ли APK после пересборки на GitHub Actions).
+        log("Сборка: подбор пароля v3 (NG=15мс, fallback=220мс)")
         listDevices = findViewById(R.id.listDevices)
         btnScan = findViewById(R.id.btnScan)
         btnDisconnect = findViewById(R.id.btnDisconnect)
@@ -773,10 +777,12 @@ class MainActivity : AppCompatActivity() {
                 log("Самокат отклонил пароль (CODE_NG). Попробуй другой код.")
                 if (codeProbeRunning) {
                     runOnUiThread {
+                        // Ответ CODE_NG уже пришёл — почти сразу пробуем следующий пароль
+                        // (небольшая пауза нужна только, чтобы не перегружать очередь самоката).
                         codeProbeStepRunnable?.let { handler.removeCallbacks(it) }
                         val stepRunnable = Runnable { if (codeProbeRunning) nextCodeProbeStep() }
                         codeProbeStepRunnable = stepRunnable
-                        handler.postDelayed(stepRunnable, 250)
+                        handler.postDelayed(stepRunnable, 15)
                     }
                 } else {
                     runOnUiThread { tvCodeState.text = "Пароль: ОТКЛОНЁН (CODE_NG) — неверный" }
@@ -1126,12 +1132,20 @@ class MainActivity : AppCompatActivity() {
         val idx = codeProbeIdx
         val pwd = codeProbeList[idx]
         tvCodeState.text = "Подбор ${idx + 1}/${codeProbeList.size}: пробую \"$pwd\"..."
-        sendCommand("CODE=$pwd")
-        // Страховка: если самокат вообще не ответит (ни CODE_OK, ни CODE_NG) —
-        // всё равно двигаемся дальше по списку сами, не зависаем на одном пароле.
+        // fast=true — как у "ультра"-стробоскопа: пишем без ожидания подтверждения записи
+        // (WRITE_NO_RESPONSE, если характеристика это поддерживает), чтобы не ждать лишний
+        // GATT round-trip перед отправкой следующего кандидата. Соединение уже держится на
+        // CONNECTION_PRIORITY_HIGH (см. onServicesDiscovered), так что интервал связи и так
+        // короткий — узким местом был именно наш собственный программный таймаут ниже.
+        sendCommand("CODE=$pwd", fast = true)
+        // Страховка: если самокат вообще не ответит (ни CODE_OK, ни CODE_NG) — всё равно
+        // двигаемся дальше по списку сами, не зависаем на одном пароле. 220мс — с хорошим
+        // запасом (реальный BLE round-trip при CONNECTION_PRIORITY_HIGH обычно ~100мс);
+        // если на твоём самокате это мало и он не успевает ответить — увеличь это число
+        // (и число 15 ниже, в обработке CODE_NG).
         val stepRunnable = Runnable { if (codeProbeRunning && idx == codeProbeIdx) nextCodeProbeStep() }
         codeProbeStepRunnable = stepRunnable
-        handler.postDelayed(stepRunnable, 900)
+        handler.postDelayed(stepRunnable, 220)
     }
 
     private fun stopCodeProbe(message: String) {
@@ -1386,3 +1400,4 @@ class MainActivity : AppCompatActivity() {
         }
     }
 }
+
