@@ -245,6 +245,10 @@ class MainActivity : AppCompatActivity() {
     private var codeProbeRunning = false
     private var codeProbeIdx = -1
     private var codeProbeStepRunnable: Runnable? = null
+    // 0 = перебор по введённому списку; N = перебор всех N-значных кодов (000..99..9) без ручного ввода
+    private var codeProbeGenDigits = 0
+    // С какого индекса начинать перебор (сохраняется, чтобы продолжить после остановки)
+    private var codeProbeStart = 0
 
     // ---- Проверка поддержки команд ----
     private var supportChecking = false
@@ -408,8 +412,10 @@ class MainActivity : AppCompatActivity() {
         checkAutoCode.setOnCheckedChangeListener { _, checked -> prefs.edit().putBoolean("auto_code", checked).apply() }
         btnCodeSend.setOnClickListener { sendPasswordCode() }
         codeProbeList = parseCodeList(prefs.getString("code_list", "") ?: "")
+        codeProbeGenDigits = prefs.getInt("code_gen_digits", 0)
+        codeProbeStart = prefs.getInt("code_gen_next", 0)
         updateCodeBruteButtonLabel()
-        btnCodeList.setOnClickListener { showCodeListDialog() }
+        btnCodeList.setOnClickListener { showCodeSourceDialog() }
         btnCodeBrute.setOnClickListener { if (codeProbeRunning) stopCodeProbe("Подбор остановлен вручную.") else startCodeProbe() }
         btnLockDiag.setOnClickListener {
             runCommandScript(
@@ -754,7 +760,9 @@ class MainActivity : AppCompatActivity() {
 
         // Во время стробоскопа самокат шлёт push "HLGT=0/1" на каждое мигание — не засоряем лог.
         val noisy = strobeOn && upper.startsWith("HLGT")
-        if (!noisy) log("<< ${characteristic.uuid}  hex=[$hex]  text=\"$rawText\"")
+        // Во время подбора пароля ответы CODE_NG не пишем в лог (их будет миллионы).
+        val probeNg = codeProbeRunning && upper == "CODE_NG"
+        if (!noisy && !probeNg) log("<< ${characteristic.uuid}  hex=[$hex]  text=\"$rawText\"")
 
         if (hornProbeRunning) hornProbeReplies.append(rawText.trim()).append(' ')
         if (scriptRunning && !noisy) scriptReplies.append(rawText.trim()).append(' ')
@@ -763,18 +771,18 @@ class MainActivity : AppCompatActivity() {
             "CODE_OK" -> {
                 log("Самокат принял пароль (CODE_OK).")
                 if (codeProbeRunning) {
-                    val found = codeProbeList.getOrNull(codeProbeIdx) ?: editCode.text.toString()
+                    val found = codeProbeCandidate(codeProbeIdx)
                     runOnUiThread {
                         editCode.setText(found)
                         getSharedPreferences("scooter", MODE_PRIVATE).edit().putString("code", found).apply()
-                        stopCodeProbe("ПАРОЛЬ НАЙДЕН: \"$found\" (CODE_OK) — вписан в поле выше.")
+                        stopCodeProbe("ПАРОЛЬ НАЙДЕН: \"$found\" (CODE_OK) — вписан в поле выше.", resetProgress = true)
                     }
                 } else {
                     runOnUiThread { tvCodeState.text = "Пароль: ПРИНЯТ (CODE_OK)" }
                 }
             }
             "CODE_NG" -> {
-                log("Самокат отклонил пароль (CODE_NG). Попробуй другой код.")
+                if (!codeProbeRunning) log("Самокат отклонил пароль (CODE_NG). Попробуй другой код.")
                 if (codeProbeRunning) {
                     runOnUiThread {
                         // Ответ CODE_NG уже пришёл — почти сразу пробуем следующий пароль
@@ -1051,8 +1059,58 @@ class MainActivity : AppCompatActivity() {
             .distinct()
 
     private fun updateCodeBruteButtonLabel() {
-        btnCodeBrute.text = if (codeProbeRunning) "Остановить подбор"
-        else "Начать подбор (${codeProbeList.size})"
+        btnCodeBrute.text = when {
+            codeProbeRunning -> "Остановить подбор"
+            codeProbeGenDigits > 0 -> "Начать подбор (${codeProbeTotal()} шт., с ${codeProbeCandidate(minOf(codeProbeStart, codeProbeTotal() - 1))})"
+            else -> "Начать подбор (${codeProbeList.size})"
+        }
+    }
+
+    /** Сколько всего кандидатов: для генератора 10^N, для списка — его размер. */
+    private fun codeProbeTotal(): Int =
+        if (codeProbeGenDigits > 0) {
+            var t = 1
+            repeat(codeProbeGenDigits) { t *= 10 }
+            t
+        } else codeProbeList.size
+
+    /** Кандидат с индексом idx: для генератора — число с ведущими нулями, для списка — элемент. */
+    private fun codeProbeCandidate(idx: Int): String =
+        if (codeProbeGenDigits > 0) idx.toString().padStart(codeProbeGenDigits, '0')
+        else codeProbeList[idx]
+
+    /**
+     * Кнопка «Список паролей...»: либо вручную ввести список, либо перебрать
+     * все коды заданной длины (4, 5 или 6 цифр) без какого-либо ввода.
+     */
+    private fun showCodeSourceDialog() {
+        val items = arrayOf(
+            "Ввести список вручную",
+            "Перебор: все 4-значные (0000–9999)",
+            "Перебор: все 5-значные (00000–99999)",
+            "Перебор: все 6-значные (000000–999999, 1 000 000 шт.)"
+        )
+        AlertDialog.Builder(this)
+            .setTitle("Источник паролей")
+            .setItems(items) { _, which ->
+                val prefsEdit = getSharedPreferences("scooter", MODE_PRIVATE).edit()
+                val newDigits = if (which == 0) 0 else which + 3
+                if (newDigits != codeProbeGenDigits) {
+                    // Сменили источник — начинаем с нуля
+                    codeProbeStart = 0
+                }
+                codeProbeGenDigits = newDigits
+                prefsEdit.putInt("code_gen_digits", codeProbeGenDigits)
+                    .putInt("code_gen_next", codeProbeStart).apply()
+                if (which == 0) {
+                    showCodeListDialog()
+                } else {
+                    tvCodeState.text = "Перебор ${codeProbeGenDigits}-значных кодов: готов. Нажми «Начать подбор»."
+                }
+                updateCodeBruteButtonLabel()
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
     }
 
     /**
@@ -1107,14 +1165,16 @@ class MainActivity : AppCompatActivity() {
             tvCodeState.text = "Подбор: сначала подключись к самокату."
             return
         }
-        if (codeProbeList.isEmpty()) {
-            tvCodeState.text = "Подбор: сначала вставь список паролей (кнопка «Список паролей...»)."
+        val total = codeProbeTotal()
+        if (total == 0) {
+            tvCodeState.text = "Подбор: сначала выбери источник («Список паролей...»)."
             return
         }
+        if (codeProbeStart >= total) codeProbeStart = 0
         codeProbeRunning = true
-        codeProbeIdx = -1
+        codeProbeIdx = codeProbeStart - 1
         updateCodeBruteButtonLabel()
-        log("Подбор пароля CODE=: старт, кандидатов — ${codeProbeList.size}")
+        log("Подбор пароля CODE=: старт с ${codeProbeCandidate(codeProbeStart)}, всего кандидатов — $total")
         nextCodeProbeStep()
     }
 
@@ -1125,19 +1185,20 @@ class MainActivity : AppCompatActivity() {
             return
         }
         codeProbeIdx++
-        if (codeProbeIdx >= codeProbeList.size) {
-            stopCodeProbe("Перебрал все ${codeProbeList.size} паролей из списка — совпадение не найдено.")
+        val total = codeProbeTotal()
+        if (codeProbeIdx >= total) {
+            stopCodeProbe("Перебрал все $total кодов — совпадение не найдено.", resetProgress = true)
             return
         }
         val idx = codeProbeIdx
-        val pwd = codeProbeList[idx]
-        tvCodeState.text = "Подбор ${idx + 1}/${codeProbeList.size}: пробую \"$pwd\"..."
+        val pwd = codeProbeCandidate(idx)
+        tvCodeState.text = "Подбор ${idx + 1}/$total: пробую \"$pwd\"..."
         // fast=true — как у "ультра"-стробоскопа: пишем без ожидания подтверждения записи
         // (WRITE_NO_RESPONSE, если характеристика это поддерживает), чтобы не ждать лишний
         // GATT round-trip перед отправкой следующего кандидата. Соединение уже держится на
         // CONNECTION_PRIORITY_HIGH (см. onServicesDiscovered), так что интервал связи и так
         // короткий — узким местом был именно наш собственный программный таймаут ниже.
-        sendCommand("CODE=$pwd", fast = true)
+        sendCommand("CODE=$pwd", quiet = true, fast = true)
         // Страховка: если самокат вообще не ответит (ни CODE_OK, ни CODE_NG) — всё равно
         // двигаемся дальше по списку сами, не зависаем на одном пароле. 220мс — с хорошим
         // запасом (реальный BLE round-trip при CONNECTION_PRIORITY_HIGH обычно ~100мс);
@@ -1148,10 +1209,20 @@ class MainActivity : AppCompatActivity() {
         handler.postDelayed(stepRunnable, 220)
     }
 
-    private fun stopCodeProbe(message: String) {
+    /**
+     * Останавливает подбор. В режиме генератора запоминает, где остановились, чтобы
+     * при следующем запуске продолжить с того же места (resetProgress — начать заново).
+     * Последний кандидат пишем повторно: мог остаться без ответа.
+     */
+    private fun stopCodeProbe(message: String, resetProgress: Boolean = false) {
         codeProbeRunning = false
         codeProbeStepRunnable?.let { handler.removeCallbacks(it) }
         codeProbeStepRunnable = null
+        if (codeProbeGenDigits > 0) {
+            codeProbeStart = if (resetProgress) 0 else maxOf(codeProbeIdx, 0)
+            getSharedPreferences("scooter", MODE_PRIVATE).edit()
+                .putInt("code_gen_next", codeProbeStart).apply()
+        }
         updateCodeBruteButtonLabel()
         tvCodeState.text = message
         log("Подбор пароля CODE=: $message")
