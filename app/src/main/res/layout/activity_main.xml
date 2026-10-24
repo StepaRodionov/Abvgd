@@ -287,34 +287,22 @@
                     android:layout_height="wrap_content"
                     android:text="Слать пароль автоматически после авторизации" />
 
-                <TextView
-                    android:id="@+id/tvCodeState"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Пароль: не отправлялся" />
-
-                <!-- Блок подбора пароля (Брутфорс) -->
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:text="Подбор пароля (Брутфорс)"
-                    android:textStyle="bold" />
-
+                <!-- Подбор пароля: 1) вписать огромный список через запятую, 2) запустить перебор -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
                     android:orientation="horizontal">
 
                     <Button
-                        android:id="@+id/btnSetBruteList"
+                        android:id="@+id/btnCodeList"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:text="Вписать пароли" />
+                        android:text="Список паролей..." />
 
                     <Button
-                        android:id="@+id/btnStartBrute"
+                        android:id="@+id/btnCodeBrute"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
@@ -322,12 +310,10 @@
                 </LinearLayout>
 
                 <TextView
-                    android:id="@+id/tvBruteState"
-                    android:layout_width="match_parent"
+                    android:id="@+id/tvCodeState"
+                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Список пуст"
-                    android:textStyle="bold" />
-                <!-- КОНЕЦ Блока подбора пароля -->
+                    android:text="Пароль: не отправлялся" />
 
                 <Button
                     android:id="@+id/btnLockDiag"
