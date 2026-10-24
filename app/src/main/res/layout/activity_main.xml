@@ -123,6 +123,11 @@
                     android:text="Стробоскоп (мигание фарой)"
                     android:textStyle="bold" />
 
+                <Spinner
+                    android:id="@+id/spinnerStrobe"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content" />
+
                 <Button
                     android:id="@+id/btnStrobe"
                     android:layout_width="match_parent"
@@ -133,14 +138,14 @@
                     android:id="@+id/tvStrobeSpeed"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Интервал: 200 мс" />
+                    android:text="Интервал: 200 мс (шаг паттерна; в режиме «Ультра» игнорируется)" />
 
                 <SeekBar
                     android:id="@+id/seekStrobe"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:max="72"
-                    android:progress="12" />
+                    android:max="78"
+                    android:progress="18" />
 
                 <!-- Гудок -->
                 <TextView
@@ -203,6 +208,18 @@
                     android:text="Блокировка, круиз, передачи"
                     android:textStyle="bold" />
 
+                <TextView
+                    android:id="@+id/tvLockState"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Блокировка: неизвестно" />
+
+                <TextView
+                    android:id="@+id/tvCruiseState"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Круиз: неизвестно" />
+
                 <GridLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -229,6 +246,68 @@
                         android:layout_width="0dp" android:layout_height="wrap_content"
                         android:layout_columnWeight="1" />
                 </GridLayout>
+
+                <!-- Пароль подключения CODE= -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="Пароль подключения (CODE=)"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:textSize="12sp"
+                    android:text="Оригинальное приложение сразу после подключения шлёт CODE=пароль, и пока самокат не ответил CODE_OK, он может показывать на дисплее ввод пароля и не принимать команды. Введи тот пароль, который задавал в оригинальном приложении (или 000000)." />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <EditText
+                        android:id="@+id/editCode"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:hint="пароль, например 000000"
+                        android:inputType="number" />
+
+                    <Button
+                        android:id="@+id/btnCodeSend"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Отправить" />
+                </LinearLayout>
+
+                <CheckBox
+                    android:id="@+id/checkAutoCode"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Слать пароль автоматически после авторизации" />
+
+                <TextView
+                    android:id="@+id/tvCodeState"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Пароль: не отправлялся" />
+
+                <Button
+                    android:id="@+id/btnLockDiag"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="Тест блокировки и круиза (покажет ответы)" />
+
+                <TextView
+                    android:id="@+id/tvLockDiag"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:textIsSelectable="true"
+                    android:textSize="12sp"
+                    android:text="" />
 
                 <Button
                     android:id="@+id/btnCheckSupport"
